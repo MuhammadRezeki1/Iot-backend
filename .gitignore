@@ -14,6 +14,7 @@ lerna-debug.log*
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Tests
 /coverage
@@ -35,12 +36,13 @@ lerna-debug.log*
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# dotenv environment variable files
+# dotenv environment variable files - JANGAN COMMIT FILE INI!
 .env
 .env.development.local
 .env.test.local
 .env.production.local
 .env.local
+.env.*.local
 
 # temp directory
 .temp

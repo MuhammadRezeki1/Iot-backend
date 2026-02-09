@@ -8,18 +8,22 @@ export class DailyEnergy {
   @Column({ type: 'date', unique: true })
   date: Date;
 
-  @Column({ type: 'float', name: 'total_energy' })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'total_energy' })
   total_energy: number;
 
-  @Column({ type: 'float', name: 'avg_energy' })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'avg_energy' })
   avg_energy: number;
 
-  @Column({ type: 'float', name: 'max_energy' })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'max_energy' })
   max_energy: number;
 
-  @Column({ type: 'float', name: 'min_energy' })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'min_energy' })
   min_energy: number;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({ 
+    type: 'timestamp', 
+    default: () => 'CURRENT_TIMESTAMP',
+    name: 'created_at' 
+  })
   created_at: Date;
 }

@@ -1,18 +1,86 @@
 import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 import { PowerService } from './power.service';
+import { MqttService } from '../mqtt/mqtt.service';
 import { PowerLog } from './power.entity';
 
 @Controller('power')
 export class PowerController {
-  constructor(private readonly powerService: PowerService) {}
+  constructor(
+    private readonly powerService: PowerService,
+    private readonly mqttService: MqttService, // 🔥 Inject MqttService
+  ) {}
+
+  // ================= MQTT CONTROL ENDPOINTS =================
+
+  /**
+   * POST /power/control
+   * Toggle ON/OFF relay via MQTT
+   * Body: { "status": "on" } atau { "status": "off" }
+   */
+  @Post('control')
+  async controlPower(@Body('status') status: 'on' | 'off') {
+    console.log('📡 POST /power/control called with status:', status);
+
+    // Validasi input
+    if (status !== 'on' && status !== 'off') {
+      console.error('❌ Invalid status:', status);
+      return {
+        success: false,
+        message: 'Status harus "on" atau "off"',
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    // Publish MQTT command
+    this.mqttService.publishPowerControl(status);
+
+    console.log(`✅ Power control command sent: ${status.toUpperCase()}`);
+    return {
+      success: true,
+      message: `Relay berhasil di-set ke ${status.toUpperCase()}`,
+      status: status,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * POST /power/reboot
+   * Reboot device via MQTT
+   */
+  @Post('reboot')
+  async rebootDevice() {
+    console.log('📡 POST /power/reboot called');
+
+    // Publish MQTT reboot command
+    this.mqttService.publishReboot();
+
+    console.log('✅ Reboot command sent to device');
+    return {
+      success: true,
+      message: 'Perintah reboot berhasil dikirim ke device',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * GET /power/status
+   * Cek status koneksi MQTT
+   */
+  @Get('status')
+  async getMqttStatus() {
+    const isConnected = this.mqttService.isConnected();
+    return {
+      mqtt_connected: isConnected,
+      status: isConnected ? 'online' : 'offline',
+      timestamp: new Date().toISOString(),
+    };
+  }
 
   // ================= REALTIME ENDPOINTS - 7 DATA TERAKHIR =================
 
   /**
    * GET /power/last7
    * Ambil 7 data terakhir dari power_logs
-   * Digunakan untuk: Dashboard & Real-time Monitoring
-   * Return: Array of 7 PowerLog objects (oldest to newest)
    */
   @Get('last7')
   async getLast7(): Promise<PowerLog[]> {
@@ -54,10 +122,6 @@ export class PowerController {
 
   // ================= HISTORY ENDPOINTS =================
 
-  /**
-   * GET /power/daily
-   * Hourly data untuk 24 jam terakhir
-   */
   @Get('daily')
   async getDaily() {
     console.log('📡 GET /power/daily called');
@@ -66,10 +130,6 @@ export class PowerController {
     return data;
   }
 
-  /**
-   * GET /power/weekly
-   * Daily data untuk 7 hari terakhir
-   */
   @Get('weekly')
   async getWeekly() {
     console.log('📡 GET /power/weekly called');
@@ -78,10 +138,6 @@ export class PowerController {
     return data;
   }
 
-  /**
-   * GET /power/monthly
-   * Daily data untuk 30 hari terakhir
-   */
   @Get('monthly')
   async getMonthly() {
     console.log('📡 GET /power/monthly called');
@@ -90,10 +146,6 @@ export class PowerController {
     return data;
   }
 
-  /**
-   * GET /power/statistics
-   * Summary statistics
-   */
   @Get('statistics')
   async getStatistics(@Query('days') days?: string) {
     console.log('📡 GET /power/statistics called');
@@ -150,6 +202,7 @@ export class PowerController {
 
   @Get('range')
   getRange(@Query('start') start: string, @Query('end') end: string) {
+    console.log('📡 GET /power/range called');
     return this.powerService.findByDateRange(new Date(start), new Date(end));
   }
 }

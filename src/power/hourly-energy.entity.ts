@@ -8,18 +8,22 @@ export class HourlyEnergy {
   @Column({ type: 'timestamp' })
   timestamp: Date;
 
-  @Column({ type: 'float' })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
   energy: number;
 
-  @Column({ type: 'float' })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
   voltage: number;
 
-  @Column({ type: 'float' })
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
   current: number;
 
-  @Column({ type: 'float', name: 'power_factor' })
+  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true, name: 'power_factor' })
   power_factor: number;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({ 
+    type: 'timestamp', 
+    default: () => 'CURRENT_TIMESTAMP',
+    name: 'created_at' 
+  })
   created_at: Date;
 }

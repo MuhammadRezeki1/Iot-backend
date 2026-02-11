@@ -5,30 +5,24 @@ export class PowerLog {
   @PrimaryGeneratedColumn()
   id: number;
 
-  // Gunakan DECIMAL untuk presisi lebih baik di PostgreSQL
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   tegangan: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   arus: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, name: 'daya_watt' })
-  daya_watt: number;
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, nullable: true })
+  daya_watt: number; // ✅ Power in Watts (V × A × PF)
 
-  @Column({ type: 'decimal', precision: 10, scale: 4, nullable: true, name: 'energi_kwh' })
+  @Column({ type: 'decimal', precision: 10, scale: 4, default: 0 })
   energi_kwh: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 50 })
   frekuensi: number;
 
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true, name: 'pf' })
-  pf: number;
+  @Column({ type: 'decimal', precision: 5, scale: 2, default: 0.95 })
+  pf: number; // Power Factor
 
-  // PostgreSQL menggunakan TIMESTAMP
-  @CreateDateColumn({ 
-    type: 'timestamp', 
-    default: () => 'CURRENT_TIMESTAMP',
-    name: 'created_at' 
-  })
+  @CreateDateColumn()
   created_at: Date;
 }

@@ -23,7 +23,7 @@ async function bootstrap() {
   console.log('🚀 ====================================');
   console.log('📍 HTTP Server: http://localhost:3001');
   console.log('📡 MQTT Service: Initialized');
-  console.log('💾 Database: MySQL connected');
+  console.log('💾 Database: Postgre connected');
   console.log('🚀 ====================================');
   console.log('');
 }

@@ -1,359 +1,500 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { DataSource, Between } from 'typeorm';
+import { HourlyEnergy } from './hourly-energy.entity';
+import { DailyEnergy } from './Dailyenergy.entity';
+import { MonthlyEnergy } from './Monthlyenergy.entity';
 import { PowerLog } from './power.entity';
 
 @Injectable()
 export class PowerService {
+  private readonly logger = new Logger(PowerService.name);
+
   constructor(private readonly dataSource: DataSource) {}
+
+  // ================= HELPER: Safe Number Conversion =================
+  private safeNumber(value: any, defaultValue: number = 0): number {
+    if (value === null || value === undefined) return defaultValue;
+    const num = Number(value);
+    return isNaN(num) ? defaultValue : num;
+  }
+
+  private safeFloat(value: any, decimals: number = 2, defaultValue: number = 0): number {
+    return parseFloat(this.safeNumber(value, defaultValue).toFixed(decimals));
+  }
+
+  // ================= SAVE TO HOURLY ENERGY =================
+  
+  async saveToHourly(payload: {
+    tegangan?: number;
+    arus?: number;
+    daya_watt?: number;
+    energi_kwh?: number;
+    pf?: number;
+  }): Promise<HourlyEnergy> {
+    try {
+      const repo = this.dataSource.getRepository(HourlyEnergy);
+      
+      const intervalHours = 1 / 60;
+      let energy = this.safeFloat(payload.energi_kwh, 4);
+      
+      if (!energy && payload.daya_watt) {
+        energy = (payload.daya_watt * intervalHours) / 1000;
+      }
+
+      const hourlyData = repo.create({
+        timestamp: new Date(),
+        energy: energy,
+        voltage: this.safeFloat(payload.tegangan, 2, 220),
+        current: this.safeFloat(payload.arus, 3),
+        power_factor: this.safeFloat(payload.pf, 2, 0.95),
+      });
+
+      const saved = await repo.save(hourlyData);
+      
+      this.logger.log(
+        `✅ Data saved to hourly_energy | ID: ${saved.id} | ` +
+        `V: ${saved.voltage}V | I: ${saved.current}A | ` +
+        `E: ${saved.energy}kWh | PF: ${saved.power_factor}`
+      );
+      
+      return saved;
+    } catch (error) {
+      this.logger.error('❌ Error saving to hourly_energy:', error);
+      throw new InternalServerErrorException('Failed to save hourly data');
+    }
+  }
+
+  async save(payload: Partial<PowerLog>) {
+    return this.saveToHourly({
+      tegangan: payload.tegangan,
+      arus: payload.arus,
+      daya_watt: payload.daya_watt,
+      energi_kwh: payload.energi_kwh,
+      pf: payload.pf,
+    });
+  }
 
   // ================= REALTIME - AMBIL 7 DATA TERAKHIR =================
 
+  async getLast7(): Promise<any[]> {
+    try {
+      this.logger.log('Fetching last 7 records from hourly_energy');
+      
+      const data = await this.dataSource.getRepository(HourlyEnergy).find({
+        order: { timestamp: 'DESC' },
+        take: 7,
+      });
+      
+      this.logger.log(`Found ${data.length} records`);
+      
+      return data.reverse().map(item => ({
+        id: item.id,
+        tegangan: this.safeFloat(item.voltage, 2, 220),
+        arus: this.safeFloat(item.current, 3),
+        daya_watt: this.safeFloat(item.voltage * item.current * item.power_factor, 2),
+        energi_kwh: this.safeFloat(item.energy, 4),
+        pf: this.safeFloat(item.power_factor, 2, 0.95),
+        created_at: item.timestamp,
+      }));
+    } catch (error) {
+      this.logger.error('Error fetching last 7 records:', error);
+      throw new InternalServerErrorException('Failed to fetch last 7 records');
+    }
+  }
+
+  async getLatest(): Promise<any | null> {
+    try {
+      const result = await this.dataSource.getRepository(HourlyEnergy).findOne({
+        order: { timestamp: 'DESC' },
+      });
+      
+      if (!result) return null;
+
+      return {
+        id: result.id,
+        tegangan: this.safeFloat(result.voltage, 2, 220),
+        arus: this.safeFloat(result.current, 3),
+        daya_watt: this.safeFloat(result.voltage * result.current * result.power_factor, 2),
+        energi_kwh: this.safeFloat(result.energy, 4),
+        pf: this.safeFloat(result.power_factor, 2, 0.95),
+        created_at: result.timestamp,
+      };
+    } catch (error) {
+      this.logger.error('Error fetching latest record:', error);
+      return null;
+    }
+  }
+
+  // ================= HISTORY - SEMUA DATA TANPA FILTER =================
+
   /**
-   * GET /power/last7
-   * Ambil 7 data terakhir dari power_logs untuk dashboard & realtime monitoring
-   * Data diurutkan dari oldest to newest (chronological order)
+   * Ambil semua data hourly tanpa filter waktu
+   * Diurutkan dari terlama ke terbaru
    */
-  async getLast7(): Promise<PowerLog[]> {
-    const data = await this.dataSource.getRepository(PowerLog).find({
-      order: { created_at: 'DESC' },
-      take: 7,
-    });
-    
-    // Reverse to show oldest to newest (left to right on charts)
-    return data.reverse();
+  async getAllHourlyData(): Promise<any[]> {
+    try {
+      this.logger.log('Fetching ALL hourly data from hourly_energy (no time filter)');
+      
+      const data = await this.dataSource.getRepository(HourlyEnergy).find({
+        order: { timestamp: 'ASC' },
+      });
+
+      this.logger.log(`Found ${data.length} total hourly records`);
+
+      return data.map((row: any) => ({
+        time: new Date(row.timestamp).toLocaleString('id-ID', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        }),
+        hour: new Date(row.timestamp).getHours(),
+        energy: this.safeFloat(row.energy, 4),
+        voltage: this.safeFloat(row.voltage, 1, 220),
+        current: this.safeFloat(row.current, 3),
+        power_factor: this.safeFloat(row.power_factor, 2, 0.95),
+        timestamp: row.timestamp,
+      }));
+    } catch (error) {
+      this.logger.error('Error fetching all hourly data:', error.message);
+      return [];
+    }
   }
 
   /**
-   * GET /power/latest
-   * Ambil 1 data terbaru untuk current metrics
+   * Ambil semua data daily tanpa filter waktu
    */
-  async getLatest(): Promise<PowerLog | null> {
-    const result = await this.dataSource.getRepository(PowerLog).findOne({
-      order: { created_at: 'DESC' },
-    });
-    return result;
+  async getAllDailyData(): Promise<any[]> {
+    try {
+      this.logger.log('Fetching ALL daily data from daily_energy (no time filter)');
+      
+      const data = await this.dataSource.getRepository(DailyEnergy).find({
+        order: { date: 'ASC' },
+      });
+      
+      this.logger.log(`Found ${data.length} total daily records`);
+
+      return data.map((row: any) => ({
+        time: new Date(row.date).toLocaleDateString('id-ID', { 
+          weekday: 'short',
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric'
+        }),
+        day_name: new Date(row.date).toLocaleDateString('id-ID', { weekday: 'short' }),
+        energy: this.safeFloat(row.total_energy),
+        total_energy: this.safeFloat(row.total_energy),
+        avg_energy: this.safeFloat(row.avg_energy),
+        max_energy: this.safeFloat(row.max_energy),
+        min_energy: this.safeFloat(row.min_energy),
+        date: row.date,
+      }));
+    } catch (error) {
+      this.logger.error('Error fetching all daily data:', error.message);
+      return [];
+    }
   }
 
   /**
-   * POST /power
-   * Save new power data
+   * Ambil semua data monthly tanpa filter waktu
    */
-  async save(payload: Partial<PowerLog>) {
-    const repo = this.dataSource.getRepository(PowerLog);
-    const power = repo.create(payload);
-    return repo.save(power);
-  }
+  async getAllMonthlyData(): Promise<any[]> {
+    try {
+      this.logger.log('Fetching ALL monthly data from monthly_energy (no time filter)');
+      
+      const data = await this.dataSource.getRepository(MonthlyEnergy).find({
+        order: { 
+          year: 'ASC',
+          month: 'ASC' 
+        },
+      });
 
-  // ================= HISTORY - UNTUK HISTORY PAGE =================
+      this.logger.log(`Found ${data.length} total monthly records`);
 
-  /**
-   * GET /power/daily
-   * Data hourly untuk 24 jam terakhir dari hourly_energy table
-   */
-  async getDailyData(): Promise<any[]> {
-    console.log('🔍 [DAILY] Fetching hourly data from hourly_energy table...');
-    
-    const query = `
-      SELECT 
-        DATE_FORMAT(timestamp, '%H:%i') as time,
-        HOUR(timestamp) as hour,
-        ROUND(energy, 2) as energy,
-        ROUND(voltage, 2) as voltage,
-        ROUND(current, 2) as current,
-        ROUND(power_factor, 2) as power_factor,
-        timestamp
-      FROM hourly_energy 
-      WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-      ORDER BY timestamp ASC
-    `;
-
-    const data = await this.dataSource.query(query);
-    console.log('✅ [DAILY] Found', data.length, 'hourly records');
-
-    return data.map((row: any) => ({
-      time: row.time,
-      hour: row.hour,
-      energy: parseFloat(row.energy || 0),
-      voltage: parseFloat(row.voltage || 220),
-      current: parseFloat(row.current || 0),
-      power_factor: parseFloat(row.power_factor || 0.95),
-      timestamp: row.timestamp,
-    }));
+      return data.map((row: any, index: number) => ({
+        time: `${this.getMonthName(row.month)} ${row.year}`,
+        month: this.safeNumber(row.month),
+        year: this.safeNumber(row.year),
+        energy: this.safeFloat(row.total_energy),
+        total_energy: this.safeFloat(row.total_energy),
+        avg_daily_energy: this.safeFloat(row.avg_daily_energy),
+        peak_date: row.peak_date,
+      }));
+    } catch (error) {
+      this.logger.error('Error fetching all monthly data:', error.message);
+      return [];
+    }
   }
 
   /**
-   * GET /power/weekly
-   * Data 7 hari terakhir dari daily_energy table
+   * Helper untuk nama bulan
    */
-  async getWeeklyData(): Promise<any[]> {
-    console.log('🔍 [WEEKLY] Fetching 7 days data from daily_energy table...');
-    
-    const query = `
-      SELECT 
-        DATE_FORMAT(date, '%a') as day_name,
-        ROUND(total_energy, 2) as energy,
-        ROUND(avg_energy, 2) as avg_energy,
-        ROUND(max_energy, 2) as max_energy,
-        ROUND(min_energy, 2) as min_energy,
-        date
-      FROM daily_energy 
-      ORDER BY date DESC
-      LIMIT 7
-    `;
-
-    const data = await this.dataSource.query(query);
-    console.log('✅ [WEEKLY] Found', data.length, 'daily records');
-
-    // Reverse to show oldest to newest
-    return data.reverse().map((row: any) => ({
-      time: row.day_name,
-      energy: parseFloat(row.energy || 0),
-      avg_energy: parseFloat(row.avg_energy || 0),
-      max_energy: parseFloat(row.max_energy || 0),
-      min_energy: parseFloat(row.min_energy || 0),
-      date: row.date,
-    }));
+  private getMonthName(month: number): string {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return months[month - 1] || 'Unknown';
   }
 
-  /**
-   * GET /power/monthly
-   * Data 30 hari terakhir dari daily_energy table
-   */
-  async getMonthlyData(): Promise<any[]> {
-    console.log('🔍 [MONTHLY] Fetching 30 days data from daily_energy table...');
-    
-    const query = `
-      SELECT 
-        date,
-        ROUND(total_energy, 2) as energy,
-        ROUND(avg_energy, 2) as avg_energy,
-        DAY(date) as day_num
-      FROM daily_energy 
-      ORDER BY date DESC
-      LIMIT 30
-    `;
+  // ================= STATISTICS - DARI SEMUA DATA =================
 
-    const data = await this.dataSource.query(query);
-    console.log('✅ [MONTHLY] Found', data.length, 'daily records');
+  async getStatistics(days?: number): Promise<any> {
+    try {
+      this.logger.log('Fetching statistics from ALL data');
+      
+      // Hitung dari semua data daily_energy
+      const statsQuery = `
+        SELECT 
+          COALESCE(SUM(total_energy), 0) as total_energy,
+          COALESCE(AVG(total_energy), 0) as avg_daily,
+          COALESCE(MAX(total_energy), 0) as peak,
+          COUNT(*) as total_days
+        FROM daily_energy
+      `;
 
-    // Reverse to show oldest to newest
-    return data.reverse().map((row: any, index: number) => ({
-      time: `Day ${index + 1}`,
-      energy: parseFloat(row.energy || 0),
-      avg_energy: parseFloat(row.avg_energy || 0),
-      date: row.date,
-      day: row.day_num,
-    }));
-  }
+      const stats = await this.dataSource.query(statsQuery);
 
-  async getStatistics(days = 30): Promise<any> {
-    console.log(`🔍 [STATISTICS] Fetching stats for last ${days} days...`);
-    
-    const statsQuery = `
-      SELECT 
-        COALESCE(SUM(total_energy), 0) as total_energy,
-        COALESCE(AVG(total_energy), 0) as avg_daily,
-        COALESCE(MAX(total_energy), 0) as peak
-      FROM daily_energy 
-      WHERE date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-    `;
+      // Peak hour dari hourly_energy
+      const peakHourQuery = `
+        SELECT 
+          TO_CHAR(timestamp, 'HH24:00') as peak_hour,
+          COALESCE(energy, 0) as energy
+        FROM hourly_energy 
+        ORDER BY energy DESC
+        LIMIT 1
+      `;
 
-    const stats = await this.dataSource.query(statsQuery, [days]);
+      const peakHour = await this.dataSource.query(peakHourQuery);
 
-    const peakHourQuery = `
-      SELECT 
-        DATE_FORMAT(timestamp, '%H:00') as peak_hour,
-        energy
-      FROM hourly_energy 
-      WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-      ORDER BY energy DESC
-      LIMIT 1
-    `;
+      const result = {
+        total_energy: this.safeFloat(stats[0]?.total_energy, 2, 0),
+        avg_daily_usage: this.safeFloat(stats[0]?.avg_daily, 2, 0),
+        peak_usage: this.safeFloat(stats[0]?.peak, 2, 0),
+        peak_hour: peakHour[0]?.peak_hour || '18:00',
+        total_days: this.safeNumber(stats[0]?.total_days, 0),
+      };
 
-    const peakHour = await this.dataSource.query(peakHourQuery);
-
-    const result = {
-      total_energy: parseFloat(Number(stats[0]?.total_energy || 0).toFixed(2)),
-      avg_daily_usage: parseFloat(Number(stats[0]?.avg_daily || 0).toFixed(2)),
-      peak_usage: parseFloat(Number(stats[0]?.peak || 0).toFixed(2)),
-      peak_hour: peakHour[0]?.peak_hour || '18:00',
-    };
-
-    console.log('✅ [STATISTICS] Result:', result);
-    return result;
+      this.logger.log('Statistics result:', result);
+      return result;
+    } catch (error) {
+      this.logger.error('Error fetching statistics:', error.message);
+      return {
+        total_energy: 0,
+        avg_daily_usage: 0,
+        peak_usage: 0,
+        peak_hour: '18:00',
+        total_days: 0,
+      };
+    }
   }
 
   // ================= REPORTS =================
 
   async getMonthlyReports(): Promise<any[]> {
-    console.log('🔍 [REPORTS] Fetching monthly reports...');
-    
-    const query = `
-      SELECT 
-        month,
-        year,
-        ROUND(total_energy, 2) as total_energy,
-        ROUND(avg_daily_energy, 2) as avg_daily_energy,
-        peak_date,
-        CONCAT(year, '-', LPAD(month, 2, '0')) as period
-      FROM monthly_energy 
-      ORDER BY year DESC, month DESC
-      LIMIT 12
-    `;
+    try {
+      this.logger.log('Fetching ALL monthly reports');
+      
+      const data = await this.dataSource.getRepository(MonthlyEnergy).find({
+        order: { 
+          year: 'DESC',
+          month: 'DESC' 
+        },
+      });
+      
+      this.logger.log(`Found ${data.length} monthly records`);
 
-    const data = await this.dataSource.query(query);
-    console.log('✅ [REPORTS] Found', data.length, 'monthly records');
-
-    return data.map((row: any) => ({
-      month: row.month,
-      year: row.year,
-      period: row.period,
-      total_energy: parseFloat(row.total_energy || 0),
-      avg_daily_energy: parseFloat(row.avg_daily_energy || 0),
-      peak_date: row.peak_date,
-    }));
+      return data.map((row: any) => ({
+        month: this.safeNumber(row.month),
+        year: this.safeNumber(row.year),
+        period: `${row.year}-${String(row.month).padStart(2, '0')}`,
+        total_energy: this.safeFloat(row.total_energy),
+        avg_daily_energy: this.safeFloat(row.avg_daily_energy),
+        peak_date: row.peak_date,
+      }));
+    } catch (error) {
+      this.logger.error('Error fetching monthly reports:', error.message);
+      return [];
+    }
   }
 
   async getCurrentMonthReport(): Promise<any> {
-    console.log('🔍 [REPORTS] Fetching current month report...');
-    
-    const query = `
-      SELECT 
-        month,
-        year,
-        ROUND(total_energy, 2) as total_energy,
-        ROUND(avg_daily_energy, 2) as avg_daily_energy,
-        peak_date
-      FROM monthly_energy 
-      WHERE month = MONTH(CURDATE()) 
-      AND year = YEAR(CURDATE())
-      LIMIT 1
-    `;
+    try {
+      this.logger.log('Fetching current month report');
+      
+      const now = new Date();
+      const currentMonth = now.getMonth() + 1;
+      const currentYear = now.getFullYear();
 
-    const data = await this.dataSource.query(query);
-    
-    if (data.length === 0) {
+      const data = await this.dataSource.getRepository(MonthlyEnergy).findOne({
+        where: {
+          month: currentMonth,
+          year: currentYear,
+        },
+      });
+      
+      if (!data) {
+        return {
+          month: currentMonth,
+          year: currentYear,
+          total_energy: 0,
+          avg_daily_energy: 0,
+          peak_date: null,
+        };
+      }
+
       return {
-        month: new Date().getMonth() + 1,
-        year: new Date().getFullYear(),
+        month: this.safeNumber(data.month),
+        year: this.safeNumber(data.year),
+        total_energy: this.safeFloat(data.total_energy),
+        avg_daily_energy: this.safeFloat(data.avg_daily_energy),
+        peak_date: data.peak_date,
+      };
+    } catch (error) {
+      this.logger.error('Error fetching current month report:', error.message);
+      const now = new Date();
+      return {
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
         total_energy: 0,
         avg_daily_energy: 0,
         peak_date: null,
       };
     }
-
-    const row = data[0];
-    return {
-      month: row.month,
-      year: row.year,
-      total_energy: parseFloat(row.total_energy || 0),
-      avg_daily_energy: parseFloat(row.avg_daily_energy || 0),
-      peak_date: row.peak_date,
-    };
   }
 
-  // ================= ANALYSIS - POWER ANALYSIS PAGE =================
+  // ================= ANALYSIS =================
 
   async getAnalysisPeakUsage(): Promise<any[]> {
-    console.log('🔍 [ANALYSIS-PEAK] Fetching 7 latest hourly records...');
-    
-    const query = `
-      SELECT 
-        DATE_FORMAT(timestamp, '%H:%i') as time,
-        ROUND(energy * 1000, 0) as power_watt,
-        ROUND(voltage, 2) as voltage,
-        ROUND(current, 2) as current,
-        ROUND(power_factor, 2) as power_factor,
-        timestamp
-      FROM hourly_energy 
-      ORDER BY timestamp DESC
-      LIMIT 7
-    `;
+    try {
+      this.logger.log('Fetching peak usage data');
+      
+      const data = await this.dataSource.getRepository(HourlyEnergy).find({
+        order: { energy: 'DESC' },
+        take: 10,
+      });
 
-    const data = await this.dataSource.query(query);
-    console.log('✅ [ANALYSIS-PEAK] Found', data.length, 'records');
+      this.logger.log(`Found ${data.length} peak usage records`);
 
-    return data.reverse().map((row: any) => ({
-      time: row.time,
-      usage: Math.round(parseFloat(row.power_watt || 0)),
-      voltage: parseFloat(row.voltage || 220),
-      current: parseFloat(row.current || 0),
-      power_factor: parseFloat(row.power_factor || 0.95),
-      timestamp: row.timestamp,
-    }));
+      return data.map((row: any) => ({
+        time: new Date(row.timestamp).toLocaleString('id-ID'),
+        usage: this.safeNumber(row.energy * 1000),
+        voltage: this.safeFloat(row.voltage, 2, 220),
+        current: this.safeFloat(row.current, 3),
+        power_factor: this.safeFloat(row.power_factor, 2, 0.95),
+        timestamp: row.timestamp,
+      }));
+    } catch (error) {
+      this.logger.error('Error fetching peak usage:', error.message);
+      return [];
+    }
   }
 
   async getLoadPattern(): Promise<any[]> {
-    console.log('🔍 [ANALYSIS-LOAD] Fetching 7 latest days from daily_energy...');
-    
-    const query = `
-      SELECT 
-        DATE_FORMAT(date, '%a') as day_name,
-        ROUND(total_energy, 2) as total_energy,
-        date,
-        DAYOFWEEK(date) as day_of_week
-      FROM daily_energy 
-      ORDER BY date DESC
-      LIMIT 7
-    `;
-
-    const data = await this.dataSource.query(query);
-    console.log('✅ [ANALYSIS-LOAD] Found', data.length, 'daily records');
-
-    if (data.length === 0) return [];
-
-    const reversedData = data.reverse();
-
-    return reversedData.map((row: any) => {
-      const totalEnergyKwh = parseFloat(row.total_energy || 0);
-      const avgWattPerHour = (totalEnergyKwh * 1000) / 24;
+    try {
+      this.logger.log('Fetching load pattern data from ALL daily data');
       
-      const isWeekend = row.day_of_week === 1 || row.day_of_week === 7;
-      const weekendMultiplier = isWeekend ? 1.15 : 1.0;
-      
-      const morning = Math.round(avgWattPerHour * 0.60 * weekendMultiplier);
-      const afternoon = Math.round(avgWattPerHour * 0.80 * weekendMultiplier);
-      const evening = Math.round(avgWattPerHour * 1.30 * weekendMultiplier);
-      
-      return {
-        day: row.day_name,
-        morning: morning,
-        afternoon: afternoon,
-        evening: evening,
-        date: row.date,
-        total_energy: totalEnergyKwh,
-      };
-    });
+      const data = await this.dataSource.getRepository(DailyEnergy).find({
+        order: { date: 'DESC' },
+        take: 30,
+      });
+
+      this.logger.log(`Found ${data.length} load pattern records`);
+
+      if (data.length === 0) return [];
+
+      const reversedData = data.reverse();
+
+      return reversedData.map((row: any) => {
+        const totalEnergyKwh = this.safeFloat(row.total_energy);
+        const avgWattPerHour = (totalEnergyKwh * 1000) / 24;
+        
+        const date = new Date(row.date);
+        const dayOfWeek = date.getDay();
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+        const weekendMultiplier = isWeekend ? 1.15 : 1.0;
+        
+        const morning = Math.round(avgWattPerHour * 0.60 * weekendMultiplier);
+        const afternoon = Math.round(avgWattPerHour * 0.80 * weekendMultiplier);
+        const evening = Math.round(avgWattPerHour * 1.30 * weekendMultiplier);
+        
+        return {
+          day: date.toLocaleDateString('id-ID', { weekday: 'short' }),
+          morning: morning,
+          afternoon: afternoon,
+          evening: evening,
+          date: row.date,
+          total_energy: totalEnergyKwh,
+        };
+      });
+    } catch (error) {
+      this.logger.error('Error fetching load pattern:', error.message);
+      return [];
+    }
   }
 
   async getPowerFactorAverage(): Promise<number> {
-    console.log('🔍 [ANALYSIS-PF] Fetching power factor average...');
-    
-    const query = `
-      SELECT 
-        AVG(power_factor) as avg_pf
-      FROM hourly_energy 
-      WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-    `;
+    try {
+      this.logger.log('Fetching power factor average from ALL data');
+      
+      const query = `
+        SELECT 
+          COALESCE(AVG(power_factor), 0.95) as avg_pf
+        FROM hourly_energy
+      `;
 
-    const data = await this.dataSource.query(query);
-    const powerFactor = parseFloat(Number(data[0]?.avg_pf || 0.95).toFixed(2));
-    
-    console.log('✅ [ANALYSIS-PF] Power Factor:', powerFactor);
-    return powerFactor;
+      const data = await this.dataSource.query(query);
+      const powerFactor = this.safeFloat(data[0]?.avg_pf, 2, 0.95);
+      
+      this.logger.log(`Power Factor: ${powerFactor}`);
+      return powerFactor;
+    } catch (error) {
+      this.logger.error('Error fetching power factor:', error.message);
+      return 0.95;
+    }
   }
 
-  async findByDateRange(start: Date, end: Date): Promise<PowerLog[]> {
-    return this.dataSource.getRepository(PowerLog).find({
-      where: { created_at: Between(start, end) },
-      order: { created_at: 'ASC' },
-    });
+  async findByDateRange(start: Date, end: Date): Promise<any[]> {
+    try {
+      const data = await this.dataSource.getRepository(HourlyEnergy).find({
+        where: { timestamp: Between(start, end) },
+        order: { timestamp: 'ASC' },
+      });
+
+      return data.map(item => ({
+        id: item.id,
+        tegangan: this.safeFloat(item.voltage, 2, 220),
+        arus: this.safeFloat(item.current, 3),
+        daya_watt: this.safeFloat(item.voltage * item.current * item.power_factor, 2),
+        energi_kwh: this.safeFloat(item.energy, 4),
+        pf: this.safeFloat(item.power_factor, 2, 0.95),
+        created_at: item.timestamp,
+      }));
+    } catch (error) {
+      this.logger.error('Error fetching date range:', error);
+      return [];
+    }
   }
 
-  async findAll(): Promise<PowerLog[]> {
-    return this.dataSource.getRepository(PowerLog).find({
-      order: { created_at: 'ASC' },
-      take: 1000,
-    });
+  async findAll(): Promise<any[]> {
+    try {
+      const data = await this.dataSource.getRepository(HourlyEnergy).find({
+        order: { timestamp: 'ASC' },
+      });
+
+      return data.map(item => ({
+        id: item.id,
+        tegangan: this.safeFloat(item.voltage, 2, 220),
+        arus: this.safeFloat(item.current, 3),
+        daya_watt: this.safeFloat(item.voltage * item.current * item.power_factor, 2),
+        energi_kwh: this.safeFloat(item.energy, 4),
+        pf: this.safeFloat(item.power_factor, 2, 0.95),
+        created_at: item.timestamp,
+      }));
+    } catch (error) {
+      this.logger.error('Error fetching all records:', error);
+      return [];
+    }
   }
 }

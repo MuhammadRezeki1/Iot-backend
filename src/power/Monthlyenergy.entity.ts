@@ -18,7 +18,7 @@ export class MonthlyEnergy {
   avg_daily_energy: number;
 
   @Column({ type: 'date', nullable: true, name: 'peak_date' })
-  peak_date: Date;
+  peak_date?: Date;  // ✅ Made optional to support null values
 
   @CreateDateColumn({ 
     type: 'timestamp', 

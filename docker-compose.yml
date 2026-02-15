@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: iot-backend
+    ports:
+      - "3001:3001"
+    environment:
+      DB_TYPE: postgres
+      DB_HOST: 148.230.98.12
+      DB_PORT: 5432
+      DB_USERNAME: postgres
+      DB_PASSWORD: D4t4bas3N3TKR1da
+      DB_DATABASE: iot_monitoring
+      DB_SSL: false
+      MQTT_BROKER: tcp://test.mosquitto.org:1883
+      MQTT_TOPIC_DATA: iot/power
+      PORT: 3001
+      NODE_ENV: production
+    restart: unless-stopped

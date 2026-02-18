@@ -1,9 +1,6 @@
-version: '3.8'
-
-services:
-  backend:
+backend:
     build:
-      context: .
+      context: ./Iot-backend
       dockerfile: Dockerfile
     container_name: iot-backend
     ports:
@@ -16,8 +13,18 @@ services:
       DB_PASSWORD: D4t4bas3N3TKR1da
       DB_DATABASE: iot_monitoring
       DB_SSL: false
-      MQTT_BROKER: tcp://test.mosquitto.org:1883
+      MQTT_BROKER: tcp://test.mosquitto.org:1883  # sama dengan ESP8266
+      MQTT_USERNAME: ""
+      MQTT_PASSWORD: ""
       MQTT_TOPIC_DATA: iot/power
+      MQTT_TOPIC_CONTROL: iot/power/control
+      MQTT_TOPIC_REBOOT: iot/power/reboot
+      MQTT_BATCH_INTERVAL: 5000
+      MQTT_BUFFER_MAX_SIZE: 1000
       PORT: 3001
       NODE_ENV: production
+      CORS_ORIGIN: http://localhost:3000
+      LOG_LEVEL: info
     restart: unless-stopped
+    networks:
+      - iot-network

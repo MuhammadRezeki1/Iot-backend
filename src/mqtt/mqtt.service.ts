@@ -280,7 +280,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     }
 
     const topic = this.configService.get<string>('MQTT_TOPIC_CONTROL', 'iot/power/control');
-    const payload = JSON.stringify({ relay: status });
+    const payload = JSON.stringify({ status: status });
     
     this.logger.log(`📤 Publishing to ${topic}: ${status.toUpperCase()}`);
     
